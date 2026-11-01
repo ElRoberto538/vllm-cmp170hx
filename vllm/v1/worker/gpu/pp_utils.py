@@ -291,12 +291,14 @@ class PPHandler:
         assert self.is_last_rank
         if compute_need_sampled_mask(input_batch) is None:
             return
+        # Gather on the main stream: `draft_tokens` is the shared request-state
+        # buffer, which the main stream may overwrite before a gather queued on
+        # the broadcast stream runs (upstream #64458).
+        send = draft_tokens[input_batch.idx_mapping]
         with torch.cuda.stream(self.broadcast_stream):
             self.broadcast_stream.wait_stream(self.main_stream)
-            send = draft_tokens[input_batch.idx_mapping].contiguous()
-            # Must record the idx_mapping tensor since it was allocated
-            # on the main stream.
-            input_batch.idx_mapping.record_stream(self.broadcast_stream)
+            # Allocated on the main stream.
+            send.record_stream(self.broadcast_stream)
             torch.distributed.broadcast(
                 send, src=self.last_rank, group=self.broadcast_group
             )
